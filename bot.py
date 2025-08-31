@@ -1,15 +1,13 @@
 # bot.py
 import os
 import threading
-import time
 from flask import Flask
-from google import genai        # agar Gemini ishlatayotgan bo'lsang
+from google import genai        # yoki openai agar OpenAI ishlatayotgan bo'lsangiz
 from telegram import Update
 from telegram.ext import Application, MessageHandler, CommandHandler, ContextTypes, filters
 
 # ENV
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-# GEMINI_API_KEY ni genai.Client() avtomatik oladi (so'ralsa)
 client = genai.Client()
 
 # Telegram handlers
@@ -20,7 +18,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prompt = update.message.text
     try:
         resp = client.models.generate_content(
-            model="gemini-2.5-mini",   # kamroq resursli model tavsiya qilinadi
+            model="gemini-2.5-mini",
             contents=prompt
         )
         answer = getattr(resp, "text", None) or str(resp)
@@ -28,12 +26,11 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         answer = "Xatolik yuz berdi: " + str(e)
     await update.message.reply_text(answer)
 
-def run_telegram():
+def create_telegram_app():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
-    print("Starting telegram polling...", flush=True)
-    app.run_polling()
+    return app
 
 # Minimal Flask healthcheck
 flask_app = Flask("health")
@@ -43,12 +40,16 @@ def index():
     return "OK", 200
 
 if __name__ == "__main__":
-    # 1) Telegram polling in background thread
-    t = threading.Thread(target=run_telegram, daemon=True)
-    t.start()
+    # 1) Start Flask healthcheck in background thread (daemon=True)
+    def run_flask():
+        port = int(os.environ.get("PORT", 10000))
+        # disable reloader
+        flask_app.run(host="0.0.0.0", port=port, use_reloader=False)
 
-    # 2) Start Flask app on port assigned by Render
-    port = int(os.environ.get("PORT", 10000))
-    print(f"Starting health server on port {port}", flush=True)
-    flask_app.run(host="0.0.0.0", port=port)
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
 
+    # 2) Start Telegram in main thread (this will create the asyncio loop correctly)
+    print("Starting telegram polling in main thread...", flush=True)
+    telegram_app = create_telegram_app()
+    telegram_app.run_polling()
