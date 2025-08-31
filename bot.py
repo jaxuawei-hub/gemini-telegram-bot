@@ -1,60 +1,54 @@
-import os, sys, traceback
-from google import genai
+# bot.py
+import os
+import threading
+import time
+from flask import Flask
+from google import genai        # agar Gemini ishlatayotgan bo'lsang
 from telegram import Update
 from telegram.ext import Application, MessageHandler, CommandHandler, ContextTypes, filters
 
-# IMMEDIATE LOG
-print("=== BOT STARTUP: begin ===", flush=True)
-print("PWD:", os.getcwd(), flush=True)
-print("PYTHON:", sys.executable, flush=True)
-print("ENV keys present:", {k: (k in os.environ) for k in ['TELEGRAM_BOT_TOKEN','GEMINI_API_KEY','OPENAI_API_KEY']}, flush=True)
+# ENV
+TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+# GEMINI_API_KEY ni genai.Client() avtomatik oladi (so'ralsa)
+client = genai.Client()
 
-try:
-    TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-except Exception as e:
-    print("ERROR: TELEGRAM_BOT_TOKEN missing!", flush=True)
-    raise
-
-# init client in try so errors show in logs
-try:
-    client = genai.Client()  # will use GEMINI_API_KEY from env
-    print("GenAI client created.", flush=True)
-except Exception as e:
-    print("ERROR creating GenAI client:", e, flush=True)
-    traceback.print_exc()
-    raise
-
+# Telegram handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print("Received /start from", update.effective_user.id, flush=True)
-    await update.message.reply_text("Salom! Gemini botga xush kelibsiz.")
+    await update.message.reply_text("Salom! Bot ishga tushdi.")
 
 async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    prompt = update.message.text
     try:
-        prompt = update.message.text
-        print("Incoming message:", prompt[:200], "from", update.effective_user.id, flush=True)
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.5-mini",   # kamroq resursli model tavsiya qilinadi
             contents=prompt
         )
         answer = getattr(resp, "text", None) or str(resp)
-        print("Replying:", (answer[:200] if answer else "<empty>"), flush=True)
-        await update.message.reply_text(answer)
     except Exception as e:
-        print("Handler error:", e, flush=True)
-        traceback.print_exc()
-        await update.message.reply_text("Xatolik yuz berdi, keyinroq urinib ko'ring.")
+        answer = "Xatolik yuz berdi: " + str(e)
+    await update.message.reply_text(answer)
 
-def main():
-    try:
-        app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
-        print("Starting polling...", flush=True)
-        app.run_polling()
-    except Exception as e:
-        print("FATAL ERROR in main:", e, flush=True)
-        traceback.print_exc()
-        raise
+def run_telegram():
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
+    print("Starting telegram polling...", flush=True)
+    app.run_polling()
+
+# Minimal Flask healthcheck
+flask_app = Flask("health")
+
+@flask_app.route("/", methods=["GET"])
+def index():
+    return "OK", 200
 
 if __name__ == "__main__":
-    main()
+    # 1) Telegram polling in background thread
+    t = threading.Thread(target=run_telegram, daemon=True)
+    t.start()
+
+    # 2) Start Flask app on port assigned by Render
+    port = int(os.environ.get("PORT", 10000))
+    print(f"Starting health server on port {port}", flush=True)
+    flask_app.run(host="0.0.0.0", port=port)
+
