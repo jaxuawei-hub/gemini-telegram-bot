@@ -18,7 +18,7 @@ async def chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prompt = update.message.text
     try:
         resp = client.models.generate_content(
-            model="gemini-2.5-mini",
+            model="gemini-2.5-flash",
             contents=prompt
         )
         answer = getattr(resp, "text", None) or str(resp)
